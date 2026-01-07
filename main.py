@@ -4,20 +4,103 @@ Data diambil dari Google Sheets
 """
 import os
 import asyncio
+from datetime import datetime, timedelta, time as dt_time
+from zoneinfo import ZoneInfo
+import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
 from sheet_reader import SheetReader
 from message_formatter import MessageFormatter
+from sheet_sync import sync_to_global
 
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
+GLOBAL_SHEET_ID = os.getenv("GLOBAL_SHEET_ID")
+GLOBAL_SHEET_TAB_DATABASE = os.getenv("GLOBAL_SHEET_TAB_DATABASE", "DATABASE")
+GLOBAL_SHEET_TAB_HISTORY = os.getenv("GLOBAL_SHEET_TAB_HISTORY", "HISTORY")
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+SYNC_TIMEZONE = os.getenv("SYNC_TIMEZONE", "Asia/Jakarta")
 
 # Initialize sheet reader
-sheet_reader = SheetReader(SHEET_URL)
+source_reader = SheetReader(SHEET_URL)
+# Data untuk tampilan bot diambil dari NOVLI Global
+display_reader = SheetReader(
+    None,
+    global_sheet_id=GLOBAL_SHEET_ID,
+    global_tab=GLOBAL_SHEET_TAB_DATABASE,
+    credentials_path=SERVICE_ACCOUNT_FILE,
+)
+logger = logging.getLogger("novli_bot")
+
+def setup_logging():
+    log_dir = os.path.join(os.getcwd(), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "bot.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[
+            logging.FileHandler(log_path, encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
+
+async def run_sync_job():
+    """Sync H-1 data to global spreadsheet and local backup."""
+    if not SERVICE_ACCOUNT_FILE or not GLOBAL_SHEET_ID:
+        return "Missing GLOBAL_SHEET_ID or GOOGLE_SERVICE_ACCOUNT_FILE"
+
+    # Reload source data before syncing
+    source_reader.load_data(force_reload=True, filter_h1=False)
+
+    # Filter H-1; fallback to H-2 if empty
+    df = source_reader.filter_by_days_ago(1)
+    if df is None or df.empty:
+        df = source_reader.filter_by_days_ago(2)
+    if df is None or df.empty:
+        return "No data found for H-1/H-2"
+
+    try:
+        sync_to_global(
+            SERVICE_ACCOUNT_FILE,
+            GLOBAL_SHEET_ID,
+            GLOBAL_SHEET_TAB_DATABASE,
+            GLOBAL_SHEET_TAB_HISTORY,
+            df,
+        )
+    except Exception as exc:
+        logger.exception("Sync failed: %s", exc)
+        return f"Sync failed: {exc}"
+
+    # Local backup per date
+    backup_dir = os.path.join(os.getcwd(), "backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_date = datetime.now().strftime("%Y%m%d")
+    backup_path = os.path.join(backup_dir, f"backup_{backup_date}.csv")
+    df.to_csv(backup_path, index=False)
+    logger.info("Sync finished: %s rows", len(df))
+    return f"Synced {len(df)} rows"
+
+
+async def daily_sync_loop():
+    """Run sync every day at 08:00 WIB."""
+    tz = ZoneInfo(SYNC_TIMEZONE)
+    while True:
+        now = datetime.now(tz)
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target = target + timedelta(days=1)
+        await asyncio.sleep((target - now).total_seconds())
+        await run_sync_job()
+
+
+async def scheduled_sync(context: ContextTypes.DEFAULT_TYPE):
+    """JobQueue callback for daily sync."""
+    await run_sync_job()
 
 # Inline keyboard menu utama (tampil di dalam chat)
 def get_main_keyboard() -> InlineKeyboardMarkup:
@@ -34,7 +117,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("Info", callback_data="info"),
-            InlineKeyboardButton("Refresh", callback_data="refresh"),
+            InlineKeyboardButton("Sync", callback_data="sync"),
             InlineKeyboardButton("Columns", callback_data="columns"),
         ],
         [InlineKeyboardButton("Help", callback_data="help")],
@@ -105,29 +188,8 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_reply(update, 'Kirim format: /ticket [TICKET_ID]')
     elif action == 'info':
         await info_command(update, context)
-    elif action == 'refresh':
-        await refresh(update, context)
-    elif action == 'refresh_yes':
-        await run_refresh(update, context)
-    elif action == 'refresh_fallback_yes':
-        await run_refresh_fallback(update, context)
-    elif action == 'refresh_fallback_no':
-        backup = context.chat_data.get('refresh_backup')
-        if backup:
-            sheet_reader.df, sheet_reader.df_raw, sheet_reader.last_load_time = backup
-        context.chat_data['refresh_pending'] = False
-        context.chat_data.pop('refresh_backup', None)
-        await send_reply(update, 'Menggunakan data lama.')
-    elif action == 'refresh_no':
-        context.chat_data['refresh_pending'] = False
-        context.chat_data['refresh_cancelled'] = True
-        await send_reply(update, 'Refresh dibatalkan.')
-    elif action == 'cancel_refresh':
-        if not context.chat_data.get('refresh_pending'):
-            await send_reply(update, 'Tidak ada refresh aktif untuk dibatalkan.')
-            return
-        context.chat_data['refresh_cancelled'] = True
-        await send_reply(update, 'Refresh dibatalkan. Menggunakan data lama.')
+    elif action == 'sync':
+        await sync_command(update, context)
     elif action == 'columns':
         await show_columns(update, context)
     elif action == 'alarm':
@@ -148,7 +210,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ticket [ID] - Detail tiket\n"
         "/info - Statistik data\n"
         "/alarm - Alarm ringkasan\n"
-        "/refresh - Muat ulang data\n"
+        "/sync - Sinkronisasi ke database\n"
         "/columns - Lihat nama kolom\n"
         "/help - Panduan\n\n"
         "<i>Gunakan tombol di bawah untuk menjalankan perintah.</i>"
@@ -162,19 +224,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Fungsi untuk menampilkan summary tiket
 async def show_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler untuk menampilkan summary tiket"""
-    info = sheet_reader.get_data_info()
+    info = display_reader.get_data_info()
     
     if info['total_filtered'] == 0:
-        await send_reply(update, "❌ Belum ada data. Gunakan /refresh untuk memuat data.")
+        await send_reply(update, "❌ Belum ada data. Jalankan /sync untuk memperbarui data.")
         return
     
     # Get summary stats
-    p1_count = len(sheet_reader.get_tickets_by_priority('P1'))
-    p2_count = len(sheet_reader.get_tickets_by_priority('P2'))
-    open_count, need_close_count = sheet_reader.get_summary_stats()
+    p1_count = len(display_reader.get_tickets_by_priority('P1'))
+    p2_count = len(display_reader.get_tickets_by_priority('P2'))
+    open_count, need_close_count = display_reader.get_summary_stats()
     
     # Get NOP breakdown (batasi agar tidak terlalu panjang)
-    nop_summary = sheet_reader.format_region_summary()
+    nop_summary = display_reader.format_region_summary()
     nop_lines = nop_summary.split('\n')
     
     # Batasi maksimal 15 region untuk avoid "text too long"
@@ -215,106 +277,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard(),
     )
 
-# Fungsi untuk command /refresh
-async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler untuk refresh data dari Google Sheets"""
-    confirm_keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton('Ya', callback_data='refresh_yes'), InlineKeyboardButton('Tidak', callback_data='refresh_no')]]
-    )
-    await send_reply(
-        update,
-        'Apakah kamu yakin ingin me-refresh data sekarang?',
-        reply_markup=confirm_keyboard,
-    )
-
-async def run_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cancel_keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton('Batalkan', callback_data='cancel_refresh')]]
-    )
-    context.chat_data['refresh_cancelled'] = False
-    context.chat_data['refresh_pending'] = True
-    context.chat_data['refresh_backup'] = (sheet_reader.df, sheet_reader.df_raw, sheet_reader.last_load_time)
-    await send_reply(
-        update,
-        "Memuat ulang data dari Google Sheets...\n"
-        "<i>Tekan Batalkan dalam 5 detik untuk membatalkan.</i>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=cancel_keyboard,
-    )
-
-    await asyncio.sleep(5)
-    if context.chat_data.get('refresh_cancelled'):
-        context.chat_data['refresh_pending'] = False
-        return
-
-    df = sheet_reader.load_data(force_reload=True)
-
-    if sheet_reader.last_date_filter_found is False and (df is None or df.empty):
-        fallback_keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton('Ya', callback_data='refresh_fallback_yes'), InlineKeyboardButton('Tidak', callback_data='refresh_fallback_no')]]
-        )
-        await send_reply(
-            update,
-            'Data H-1 tidak ditemukan. Mau pakai data dua hari sebelumnya?',
-            reply_markup=fallback_keyboard,
-        )
-        return
-
-    if df is not None and not df.empty:
-        info = sheet_reader.get_data_info()
-        await send_reply(
-            update,
-            "<b>Data berhasil dimuat!</b>\n\n"
-            f"Total data asli: {info['total_raw']:,} baris\n"
-            f"Data valid (P1/P2): {info['total_filtered']:,} baris\n"
-            f"Update: {info['last_update']}\n\n"
-            f"<i>Cache akan expire dalam {info['cache_expires_in']}s</i>",
-            parse_mode=ParseMode.HTML,
-        )
-    else:
-        await send_reply(
-            update,
-            'Gagal memuat data. Pastikan Google Sheets dapat diakses.',
-            parse_mode=ParseMode.HTML,
-        )
-
-    context.chat_data['refresh_pending'] = False
-    context.chat_data.pop('refresh_backup', None)
-
-async def run_refresh_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    df = sheet_reader.filter_by_days_ago(2)
-    if df is None or df.empty:
-        await send_reply(update, 'Data H-2 tidak ditemukan. Menggunakan data lama.')
-        backup = context.chat_data.get('refresh_backup')
-        if backup:
-            sheet_reader.df, sheet_reader.df_raw, sheet_reader.last_load_time = backup
-    else:
-        info = sheet_reader.get_data_info()
-        await send_reply(
-            update,
-            "<b>Data H-2 berhasil dimuat!</b>\n\n"
-            f"Total data asli: {info['total_raw']:,} baris\n"
-            f"Data valid (P1/P2): {info['total_filtered']:,} baris\n"
-            f"Update: {info['last_update']}\n\n"
-            f"<i>Cache akan expire dalam {info['cache_expires_in']}s</i>",
-            parse_mode=ParseMode.HTML,
-        )
-
-    context.chat_data['refresh_pending'] = False
-    context.chat_data.pop('refresh_backup', None)
-
 # Fungsi untuk command /info
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler untuk menampilkan info statistik data"""
-    info = sheet_reader.get_data_info()
+    info = display_reader.get_data_info()
     
     if info['total_filtered'] == 0:
-        await send_reply(update, "❌ Belum ada data. Gunakan /refresh untuk memuat data.")
+        await send_reply(update, "❌ Belum ada data. Jalankan /sync untuk memperbarui data.")
         return
     
-    p1_count = len(sheet_reader.get_tickets_by_priority('P1'))
-    p2_count = len(sheet_reader.get_tickets_by_priority('P2'))
-    open_count, need_close_count = sheet_reader.get_summary_stats()
+    p1_count = len(display_reader.get_tickets_by_priority('P1'))
+    p2_count = len(display_reader.get_tickets_by_priority('P2'))
+    open_count, need_close_count = display_reader.get_summary_stats()
     
     message = (
         f"<b>📊 Statistik Data Bot NOVLI V1.0</b>\n\n"
@@ -331,19 +305,31 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"   • Last update: {info['last_update']}\n"
         f"   • Cache valid: {'✅ Ya' if info['cache_valid'] else '❌ Tidak'}\n"
         f"   • Expires in: {info['cache_expires_in']}s\n\n"
-        f"<i>Gunakan /refresh untuk reload data dari Google Sheets</i>"
+        f"<i>Jalankan /sync untuk memperbarui data</i>"
     )
     
     await send_reply(update, message, parse_mode=ParseMode.HTML)
+
+# Fungsi untuk command /sync
+async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler untuk menjalankan sinkronisasi ke spreadsheet global"""
+    await send_reply(update, "Memulai sinkronisasi data...")
+    result = await run_sync_job()
+    if result.startswith("Missing"):
+        await send_reply(update, "Konfigurasi sync belum lengkap.")
+    elif result.startswith("No data"):
+        await send_reply(update, "Tidak ada data H-1/H-2 untuk disinkronkan.")
+    else:
+        await send_reply(update, f"Sinkronisasi selesai: {result}")
 
 # Fungsi untuk command /alarm
 async def alarm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler untuk menampilkan alarm update"""
     # Get summary stats
-    open_count, need_close_count = sheet_reader.get_summary_stats()
+    open_count, need_close_count = display_reader.get_summary_stats()
     
     # Get NOP summary
-    nop_summary = sheet_reader.format_region_summary()
+    nop_summary = display_reader.format_region_summary()
     
     # Format message
     message = MessageFormatter.format_alarm_message(
@@ -363,9 +349,9 @@ async def list_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def prompt_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Tampilkan pilihan NOP sebelum menampilkan list."""
-    df = sheet_reader.df
+    df = display_reader.df
     if df is None or df.empty:
-        await send_reply(update, "Tidak ada data tiket. Gunakan /refresh untuk memuat data.")
+        await send_reply(update, "Tidak ada data tiket. Jalankan /sync untuk memperbarui data.")
         return
 
     nop_map = [
@@ -433,9 +419,9 @@ async def _send_list_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_tickets_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler untuk menampilkan semua tiket"""
-    df = sheet_reader.df
+    df = display_reader.df
     if df is None or df.empty:
-        await send_reply(update, "Tidak ada data tiket. Gunakan /refresh untuk memuat data.")
+        await send_reply(update, "Tidak ada data tiket. Jalankan /sync untuk memperbarui data.")
         return
 
     tickets = df.to_dict("records")
@@ -443,7 +429,7 @@ async def list_tickets_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_tickets_by_nop(update: Update, context: ContextTypes.DEFAULT_TYPE, nop_name: str):
     """Handler untuk menampilkan tiket per NOP"""
-    grouped = sheet_reader.get_tickets_by_nop()
+    grouped = display_reader.get_tickets_by_nop()
     tickets = grouped.get(nop_name, [])
     if not tickets:
         await send_reply(update, f"Tidak ada tiket untuk NOP {nop_name}.")
@@ -455,7 +441,7 @@ async def list_tickets_by_nop(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def p1_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler untuk menampilkan tiket prioritas P1"""
     # Get P1 tickets
-    df_p1 = sheet_reader.get_tickets_by_priority('P1')
+    df_p1 = display_reader.get_tickets_by_priority('P1')
 
     if df_p1.empty:
         await send_reply(update, "Tidak ada tiket P1 saat ini.")
@@ -477,7 +463,7 @@ async def p1_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def p2_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler untuk menampilkan tiket prioritas P2"""
     # Get P2 tickets
-    df_p2 = sheet_reader.get_tickets_by_priority('P2')
+    df_p2 = display_reader.get_tickets_by_priority('P2')
 
     if df_p2.empty:
         await send_reply(update, "Tidak ada tiket P2 saat ini.")
@@ -508,7 +494,7 @@ async def ticket_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ticket_id = context.args[0]
     
     # Get ticket by ID
-    ticket = sheet_reader.get_ticket_by_id(ticket_id)
+    ticket = display_reader.get_ticket_by_id(ticket_id)
     
     if not ticket:
         await send_reply(update, f"❌ Tiket dengan ID <code>{ticket_id}</code> tidak ditemukan.", parse_mode=ParseMode.HTML)
@@ -521,10 +507,10 @@ async def ticket_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Fungsi untuk command /columns
 async def show_columns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler untuk menampilkan nama kolom di Google Sheets"""
-    columns = sheet_reader.get_column_names()
+    columns = display_reader.get_column_names()
     
     if not columns:
-        await send_reply(update, "❌ Tidak dapat membaca kolom. Gunakan /refresh untuk memuat data.")
+        await send_reply(update, "❌ Tidak dapat membaca kolom. Jalankan /sync untuk memperbarui data.")
         return
     
     message = "<b>📋 Kolom di Google Sheets:</b>\n\n"
@@ -547,19 +533,20 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Fungsi utama untuk menjalankan bot"""
+    setup_logging()
     # Buat aplikasi bot
     app = Application.builder().token(TOKEN).build()
     
     # Load data pertama kali dengan filter H-1
     print("🔄 Memuat data dari Google Sheets...")
-    sheet_reader.load_data(filter_h1=True)  # Pastikan filter H-1 aktif
+    display_reader.load_data(filter_h1=True)  # Pastikan filter H-1 aktif
     
     # Tambahkan handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("summary", show_summary))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("info", info_command))
-    app.add_handler(CommandHandler("refresh", refresh))
+    app.add_handler(CommandHandler("sync", sync_command))
     app.add_handler(CommandHandler("alarm", alarm))
     app.add_handler(CommandHandler("list", list_tickets))
     app.add_handler(CommandHandler("p1", p1_tickets))
@@ -568,6 +555,11 @@ def main():
     app.add_handler(CommandHandler("columns", show_columns))
     app.add_handler(CallbackQueryHandler(handle_menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+    # Jalankan sinkronisasi harian jam 08:00 WIB
+    if GLOBAL_SHEET_ID and SERVICE_ACCOUNT_FILE and app.job_queue:
+        run_time = dt_time(hour=8, minute=0, tzinfo=ZoneInfo(SYNC_TIMEZONE))
+        app.job_queue.run_daily(scheduled_sync, time=run_time, name="daily_sync")
     
     # Jalankan bot
     print("🤖 Bot NOVLI V1.0 sedang berjalan...")

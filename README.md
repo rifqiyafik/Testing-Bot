@@ -68,7 +68,6 @@ python main.py
 | `/p1` | Tampilkan tiket prioritas P1 |
 | `/p2` | Tampilkan tiket prioritas P2 |
 | `/ticket [ID]` | Tampilkan detail tiket |
-| `/refresh` | Refresh data dari Google Sheets |
 | `/columns` | Lihat nama kolom di sheet |
 
 ## File Structure
@@ -90,6 +89,11 @@ Edit file `.env`:
 ```
 TELEGRAM_TOKEN=your_telegram_bot_token
 GOOGLE_SHEET_URL=https://docs.google.com/spreadsheets/.../export?format=csv&gid=...
+GOOGLE_SERVICE_ACCOUNT_FILE=env/credentials.json
+GLOBAL_SHEET_ID=your_global_spreadsheet_id
+GLOBAL_SHEET_TAB_DATABASE=DATABASE
+GLOBAL_SHEET_TAB_HISTORY=HISTORY
+SYNC_TIMEZONE=Asia/Jakarta
 ```
 
 ## Troubleshooting

@@ -49,8 +49,6 @@ class MessageFormatter:
     def format_alarm_message(region: str, open_count: int, need_close_count: int, 
                             nop_summary: str, tickets: List[Dict]) -> str:
         """
-        Format pesan alarm seperti contoh gambar
-        Format:
         Bot NOVLI V1.0
         24-06-2025 08:51
         🔴 Update_FEGE_Alarm  OPEN
@@ -80,8 +78,6 @@ class MessageFormatter:
     @staticmethod
     def format_ticket_list(tickets: List[Dict]) -> str:
         """
-        Format daftar tiket seperti contoh gambar
-        Format:
         TiketID|Prio|Aging|BW|TrafMax|NeedClose|Status
         RAP40020250211|P2|132|800|203.42|NeedClose|Open
         """
@@ -158,7 +154,7 @@ class MessageFormatter:
         message += "• Data difilter untuk H-1 (kemarin)\n"
         message += "• Hanya tiket P1 dan P2 yang ditampilkan\n"
         message += "• Data di-cache selama 5 menit\n"
-        message += "• Gunakan /refresh untuk update manual\n\n"
+        message += "• Gunakan /sync untuk update data\n\n"
         message += "<i>Data diambil dari Google Sheets secara otomatis</i>"
         
         return message

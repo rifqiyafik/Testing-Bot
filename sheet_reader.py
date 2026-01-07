@@ -1,21 +1,34 @@
 """
 Module untuk membaca dan memproses data dari Google Sheets
 """
+import io
+import urllib.parse
+import urllib.request
 import pandas as pd
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
+from sheet_sync import read_database_df
 
 
 class SheetReader:
-    def __init__(self, sheet_url: str):
+    def __init__(
+        self,
+        sheet_url: Optional[str],
+        global_sheet_id: Optional[str] = None,
+        global_tab: Optional[str] = None,
+        credentials_path: Optional[str] = None,
+    ):
         self.sheet_url = sheet_url
+        self.global_sheet_id = global_sheet_id
+        self.global_tab = global_tab
+        self.credentials_path = credentials_path
         self.df = None
         self.df_raw = None  # Simpan raw data
         self.last_load_time = None
         self.cache_duration = 300  # Cache selama 5 menit (dalam detik)
         self.last_date_filter_target = None
         self.last_date_filter_found = None
-    
+
     def load_data(self, force_reload: bool = False, filter_h1: bool = True) -> pd.DataFrame:
         """
         Membaca data dari Google Sheets dengan caching dan filtering
@@ -28,29 +41,99 @@ class SheetReader:
         if not force_reload and self.df is not None and self.last_load_time:
             time_elapsed = (datetime.now() - self.last_load_time).total_seconds()
             if time_elapsed < self.cache_duration:
-                print(f"📦 Menggunakan cache data (refresh dalam {int(self.cache_duration - time_elapsed)}s)")
+                print(f"?? Menggunakan cache data (refresh dalam {int(self.cache_duration - time_elapsed)}s)")
                 self.df = self._ensure_derived_columns(self.df)
                 return self.df
-        
+
         try:
             import time
             start_time = time.monotonic()
-            print("🔄 Memuat data dari Google Sheets...")
-            self.df_raw = pd.read_csv(self.sheet_url)
+            if self.global_sheet_id and self.credentials_path and self.global_tab:
+                print("?? Memuat data dari NOVLI Global (DATABASE)...")
+                self.df_raw = read_database_df(
+                    self.credentials_path,
+                    self.global_sheet_id,
+                    self.global_tab,
+                )
+            else:
+                print("?? Memuat data dari Google Sheets...")
+                csv_url = self._build_csv_url(self.sheet_url)
+                self.df_raw = self._read_csv_url(csv_url)
             load_seconds = time.monotonic() - start_time
-            print(f"⏱️ Waktu load: {load_seconds:.2f}s")
-            print(f"📊 Total data di sheet: {len(self.df_raw)} baris")
-            
+            print(f"?? Waktu load: {load_seconds:.2f}s")
+            print(f"?? Total data di sheet: {len(self.df_raw)} baris")
+
             # Filter dan clean data
             self.df = self._filter_and_clean_data(self.df_raw, filter_h1=filter_h1)
-            
+
             self.last_load_time = datetime.now()
-            print(f"✅ Data berhasil dimuat dan difilter: {len(self.df)} baris valid")
-            
+            print(f"? Data berhasil dimuat dan difilter: {len(self.df)} baris valid")
+
             return self.df
         except Exception as e:
-            print(f"❌ Error membaca Google Sheets: {e}")
+            print(f"? Error membaca Google Sheets: {e}")
             return pd.DataFrame()
+
+    def _build_csv_url(self, sheet_url: str) -> str:
+        """Normalize Google Sheets URL into CSV export URL."""
+        if not sheet_url:
+            return sheet_url
+        if "docs.google.com/spreadsheets/d/" not in sheet_url:
+            return sheet_url
+        if "export?format=csv" in sheet_url:
+            return sheet_url
+
+        parsed = urllib.parse.urlparse(sheet_url)
+        path_parts = parsed.path.split("/")
+        try:
+            doc_index = path_parts.index("d") + 1
+            sheet_id = path_parts[doc_index]
+        except (ValueError, IndexError):
+            return sheet_url
+
+        gid = None
+        query = urllib.parse.parse_qs(parsed.query)
+        if "gid" in query and query["gid"]:
+            gid = query["gid"][0]
+        if not gid and parsed.fragment:
+            frag = urllib.parse.parse_qs(parsed.fragment)
+            if "gid" in frag and frag["gid"]:
+                gid = frag["gid"][0]
+
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+        if gid:
+            csv_url += f"&gid={gid}"
+        return csv_url
+
+    def _read_csv_url(self, url: str) -> pd.DataFrame:
+        """Read CSV from URL, with HTML guard."""
+        # Add cache busting to avoid stale CSV responses
+        if "docs.google.com/spreadsheets/d/" in url and "export?format=csv" in url:
+            cache_bust = int(datetime.now().timestamp())
+            joiner = "&" if "?" in url else "?"
+            url = f"{url}{joiner}cachebust={cache_bust}"
+        try:
+            with urllib.request.urlopen(url) as response:
+                data = response.read()
+        except Exception as e:
+            raise RuntimeError(f"Gagal mengakses URL CSV: {e}") from e
+
+        text = data.decode("utf-8", errors="replace")
+        head = text[:200].lower()
+        if "<!doctype html" in head or "<html" in head:
+            raise RuntimeError(
+                "URL tidak mengembalikan CSV. Pastikan link memakai export?format=csv "
+                "atau publish sheet ke web."
+            )
+        try:
+            return pd.read_csv(io.StringIO(text))
+        except Exception:
+            # Fallback for inconsistent rows
+            return pd.read_csv(
+                io.StringIO(text),
+                engine="python",
+                on_bad_lines="skip",
+            )
     
     def _filter_and_clean_data(self, df: pd.DataFrame, filter_h1: bool = True) -> pd.DataFrame:
         """
