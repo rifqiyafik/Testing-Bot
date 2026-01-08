@@ -12,7 +12,7 @@ Dokumen ini menjelaskan alur kerja dan fungsi utama di dalam program bot.
 ### 1) Inisialisasi
 - Memuat environment (`TELEGRAM_TOKEN`, `GOOGLE_SHEET_URL`).
 - Membuat instance `SheetReader` untuk akses data.
-- Menyediakan inline menu (tombol di dalam chat) melalui `InlineKeyboardMarkup`.
+- Menyediakan reply keyboard (tombol di samping chat) melalui `InlineKeyboardMarkup`.
 
 ### 2) Inline Menu
 - `get_main_keyboard()` membuat tombol seperti Summary, List, P1, P2, Refresh, dll.
@@ -25,6 +25,7 @@ Dokumen ini menjelaskan alur kerja dan fungsi utama di dalam program bot.
 - `start()`: menampilkan daftar fitur + tombol menu.
 - `show_summary()`: menampilkan ringkasan tiket H-1 (total, P1/P2, open/need close, NOP breakdown).
 - `help_command()`: panduan penggunaan dan tombol menu.
+- `import_command()` + `import_document()`: menerima file Excel/CSV, validasi header, simpan ke replika, lalu konfirmasi sync ke NOVLI Global.
 - `refresh()`: meminta konfirmasi refresh (Ya/Tidak) sebelum reload data.
 - `run_refresh()`: menjalankan reload dengan tombol batalkan (window 5 detik).
 - `info_command()`: statistik data dan cache.
@@ -90,3 +91,15 @@ Dokumen ini menjelaskan alur kerja dan fungsi utama di dalam program bot.
 - Cache data 5 menit, `/refresh` untuk reload manual.
 - Jika tombol menu tidak responsif, pastikan handler `CallbackQueryHandler` aktif.
 - Jika `Message is too long`, output sudah dipecah per 20 tiket di `/p1` dan `/p2`.
+
+
+## Menu di chat
+
+- Bot menampilkan Reply Keyboard via /start atau /menu.
+- Tombol bersifat one-time dan hilang setelah dipilih.
+
+
+## Tombol
+
+- Menu utama menggunakan Reply Keyboard (tombol di samping chat).
+- Tombol inline hanya dipakai untuk list/pagination, dan akan dihapus setelah ditekan.

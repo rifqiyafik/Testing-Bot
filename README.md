@@ -41,11 +41,13 @@ pip install -r requirements.txt
 **PENTING:** Google Sheets harus bisa diakses secara public atau menggunakan service account.
 
 #### Opsi A: Public Access (Recommended untuk testing)
+
 1. Buka Google Sheets Anda
 2. Klik **Share** > **Change to anyone with the link**
 3. Pastikan akses minimal **Viewer**
 
 #### Opsi B: Service Account (Untuk production)
+
 1. Buat Service Account di Google Cloud Console
 2. Download JSON credentials
 3. Share Google Sheets ke email service account
@@ -59,16 +61,21 @@ python main.py
 
 ## Commands
 
-| Command | Deskripsi |
-|---------|-----------|
-| `/start` | Mulai bot |
-| `/help` | Tampilkan panduan |
-| `/alarm` | Tampilkan alarm update tiket |
-| `/list` | Tampilkan semua tiket |
-| `/p1` | Tampilkan tiket prioritas P1 |
-| `/p2` | Tampilkan tiket prioritas P2 |
-| `/ticket [ID]` | Tampilkan detail tiket |
-| `/columns` | Lihat nama kolom di sheet |
+| Command             | Deskripsi                         |
+| ------------------- | --------------------------------- |
+| `/start`            | Mulai bot                         |
+| `/help`             | Tampilkan panduan                 |
+| `/alarm`            | Tampilkan alarm update tiket      |
+| `/list`             | Tampilkan semua tiket             |
+| `/p1`               | Tampilkan tiket prioritas P1      |
+| `/p2`               | Tampilkan tiket prioritas P2      |
+| `/ticket [ID]`      | Tampilkan detail tiket            |
+| `/import`           | Import data dari file (Excel/CSV) |
+| `/close`            | Tutup tiket                       |
+| `/columns`          | Lihat nama kolom di sheet         |
+| `/history [SITEID]` | Riwayat per site                  |
+| `/historyid [ID]`   | Riwayat per tiket                 |
+| `/menu`             | Tampilkan tombol menu             |
 
 ## File Structure
 
@@ -90,9 +97,12 @@ Edit file `.env`:
 TELEGRAM_TOKEN=your_telegram_bot_token
 GOOGLE_SHEET_URL=https://docs.google.com/spreadsheets/.../export?format=csv&gid=...
 GOOGLE_SERVICE_ACCOUNT_FILE=env/credentials.json
+SOURCE_SHEET_ID=your_source_spreadsheet_id
+SOURCE_SHEET_TAB=your_source_tab_name
 GLOBAL_SHEET_ID=your_global_spreadsheet_id
 GLOBAL_SHEET_TAB_DATABASE=DATABASE
 GLOBAL_SHEET_TAB_HISTORY=HISTORY
+GLOBAL_SHEET_TAB_UPDATEDAILY=UPDATEDAILY
 SYNC_TIMEZONE=Asia/Jakarta
 ```
 
@@ -105,7 +115,6 @@ Jika mendapat error ini, berarti Google Sheets tidak bisa diakses. Solusi:
 1. **Make sheet public:**
    - Buka Google Sheets
    - Klik Share > Anyone with the link > Viewer
-   
 2. **Atau gunakan Google Sheets API:**
    - Install: `pip install gspread oauth2client`
    - Setup service account credentials
@@ -138,3 +147,19 @@ Jika ada pertanyaan atau issue, silakan hubungi developer.
 ---
 
 **Made with ❤️ for NOVLI R01**
+
+## Menu di Chat
+
+Gunakan /menu atau /start untuk menampilkan tombol menu di samping chat.
+Tombol akan hilang setelah dipilih (one-time keyboard).
+
+## Menu Button
+
+Bot akan menampilkan tombol Menu di samping kolom chat melalui daftar command Telegram.
+Jika belum muncul, kirim /start atau buka kembali chat bot.
+
+## Import File
+
+Gunakan `/import` lalu kirim file Excel/CSV dengan header yang sama seperti sheet replika.
+Bot akan memvalidasi header sebelum menjalankan sync.
+Data akan disimpan ke sheet replika terlebih dahulu, lalu bot akan meminta konfirmasi untuk sync ke NOVLI Global.

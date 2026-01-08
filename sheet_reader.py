@@ -2,12 +2,15 @@
 Module untuk membaca dan memproses data dari Google Sheets
 """
 import io
+import logging
 import urllib.parse
 import urllib.request
 import pandas as pd
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 from sheet_sync import read_database_df
+
+logger = logging.getLogger("novli_bot")
 
 
 class SheetReader:
@@ -41,7 +44,7 @@ class SheetReader:
         if not force_reload and self.df is not None and self.last_load_time:
             time_elapsed = (datetime.now() - self.last_load_time).total_seconds()
             if time_elapsed < self.cache_duration:
-                print(f"?? Menggunakan cache data (refresh dalam {int(self.cache_duration - time_elapsed)}s)")
+                logger.info("Using cache (expires in %ss)", int(self.cache_duration - time_elapsed))
                 self.df = self._ensure_derived_columns(self.df)
                 return self.df
 
@@ -49,25 +52,25 @@ class SheetReader:
             import time
             start_time = time.monotonic()
             if self.global_sheet_id and self.credentials_path and self.global_tab:
-                print("?? Memuat data dari NOVLI Global (DATABASE)...")
+                logger.info("Loading NOVLI Global: sheet_id=%s tab=%s", self.global_sheet_id, self.global_tab)
                 self.df_raw = read_database_df(
                     self.credentials_path,
                     self.global_sheet_id,
                     self.global_tab,
                 )
             else:
-                print("?? Memuat data dari Google Sheets...")
+                logger.info("Loading source Google Sheet")
                 csv_url = self._build_csv_url(self.sheet_url)
                 self.df_raw = self._read_csv_url(csv_url)
             load_seconds = time.monotonic() - start_time
-            print(f"?? Waktu load: {load_seconds:.2f}s")
-            print(f"?? Total data di sheet: {len(self.df_raw)} baris")
+            logger.info("Load time: %.2fs", load_seconds)
+            logger.info("Rows loaded: %s", len(self.df_raw))
 
             # Filter dan clean data
             self.df = self._filter_and_clean_data(self.df_raw, filter_h1=filter_h1)
 
             self.last_load_time = datetime.now()
-            print(f"? Data berhasil dimuat dan difilter: {len(self.df)} baris valid")
+            logger.info("Filtered rows: %s", len(self.df))
 
             return self.df
         except Exception as e:

@@ -46,46 +46,38 @@ class MessageFormatter:
         return ""
 
     @staticmethod
-    def format_alarm_message(region: str, open_count: int, need_close_count: int, 
-                            nop_summary: str, tickets: List[Dict]) -> str:
+    def format_alarm_message(region: str, open_count: int, need_close_count: int,
+                             nop_summary: str, tickets: List[Dict]) -> str:
         """
         Bot NOVLI V1.0
         24-06-2025 08:51
-        🔴 Update_FEGE_Alarm  OPEN
-        
-        Bot NOVLI V1.0:
-        [Region: #tiket_open/#tiket_Need_close]
-        SUMBAGUT : 14 Site / 4 Site
-        
-        [NOP: #tiket_open/#tiket_Need_close]
-        ACEH : 2 Site / 0 Site
-        ...
+        Update_FEGE_Alarm OPEN
         """
         current_time = datetime.now().strftime("%d-%m-%Y %H:%M")
-        
-        message = f"<b>Bot NOVLI V1.0</b>\n"
+
+        message = "<b>Bot NOVLI V1.0</b>\n"
         message += f"<i>{current_time}</i>\n"
-        message += f"🔴 <b>Update_FEGE_Alarm  OPEN</b>\n\n"
-        message += f"<blockquote><i>Bot NOVLI V1.0:</i>\n"
-        message += f"[<i>Region:</i> <a href='#tiket_open'>#tiket_open</a>/<a href='#tiket_Need_close'>#tiket_Need_close</a>]\n"
+        message += "<b>Update_FEGE_Alarm OPEN</b>\n\n"
+        message += "<blockquote><i>Bot NOVLI V1.0:</i>\n"
+        message += "[<i>Region:</i> <a href='#tiket_open'>#tiket_open</a>/<a href='#tiket_Need_close'>#tiket_Need_close</a>]\n"
         message += f"<b>SUMBAGUT</b> : {open_count} Site / {need_close_count} Site\n\n"
-        message += f"[<i>NOP:</i> <a href='#tiket_open'>#tiket_open</a>/<a href='#tiket_Need_close'>#tiket_Need_close</a>]\n"
+        message += "[<i>NOP:</i> <a href='#tiket_open'>#tiket_open</a>/<a href='#tiket_Need_close'>#tiket_Need_close</a>]\n"
         message += nop_summary
         message += "</blockquote>"
-        
+
         return message
-    
+
     @staticmethod
     def format_ticket_list(tickets: List[Dict]) -> str:
         """
-        TiketID|Prio|Aging|BW|TrafMax|NeedClose|Status
+        TiketID|Prio|Aging|BW|TrafMax|StatusUpdate|Status
         RAP40020250211|P2|132|800|203.42|NeedClose|Open
         """
         if not tickets:
             return "Tidak ada tiket"
-        
-        message = "<b>TiketID|Prio|Aging|BW|TrafMax|NeedClose|Status</b>\n"
-        
+
+        message = "<b>TiketID|Prio|Aging|BW|TrafMax|StatusUpdate|Status</b>\n"
+
         for ticket in tickets:
             ticket_id = MessageFormatter._get_value(ticket, ["TiketID", "TicketID"], default="")
             if ticket_id == "":
@@ -101,13 +93,17 @@ class MessageFormatter:
             aging = MessageFormatter._get_value(ticket, ["Aging", "Count of >0.9"])
             bw = MessageFormatter._get_value(ticket, ["BW", "Bw"])
             traf_max = MessageFormatter._get_value(ticket, ["TrafMax", "Traf Max", "Max Ethernet Port Daily"])
-            need_close = MessageFormatter._get_value(ticket, ["NeedClose", "Need Close", "Suspect"])
+            status_update = MessageFormatter._get_value(
+                ticket,
+                ["StatusUpdate", "StatusUpdate", "Status Update"],
+                default="Open",
+            )
             status = MessageFormatter._get_value(ticket, ["Status"], default="Open")
-            
-            message += f"<code>{ticket_id}</code>|{prio}|{aging}|{bw}|{traf_max}|{need_close}|{status}\n"
-        
+
+            message += f"<code>{ticket_id}</code>|{prio}|{aging}|{bw}|{traf_max}|{status_update}|{status}\n"
+
         return message
-    
+
     @staticmethod
     def format_ticket_detail(ticket: Dict) -> str:
         """
@@ -120,41 +116,84 @@ class MessageFormatter:
         """
         if not ticket:
             return "Tiket tidak ditemukan"
-        
-        ticket_id = ticket.get('TiketID', ticket.get('TicketID', 'N/A'))
-        status = ticket.get('Status', 'N/A')
-        update_date = ticket.get('UpdateTanggal', ticket.get('UpdateDate', 'N/A'))
-        closed_by = ticket.get('ClosedBy', 'N/A')
-        
-        message = f"<b>📋 Detail Tiket</b>\n\n"
+
+        ticket_id = ticket.get("TiketID", ticket.get("TicketID", "N/A"))
+        status = ticket.get("Status", "N/A")
+        update_date = ticket.get("Updatetanggal", ticket.get("UpdateTanggal", "N/A"))
+        closed_by = ticket.get("closedby", ticket.get("ClosedBy", "N/A"))
+        status_update = ticket.get("StatusUpdate", ticket.get("StatusUpdate", "N/A"))
+        note = ticket.get("Note", "N/A")
+        date_open = ticket.get("DateOpen", "N/A")
+        aging = ticket.get("Aging", "N/A")
+
+        message = "<b>Detail Tiket</b>\n\n"
         message += f"<b>tiketid</b> : <code>{ticket_id}</code>\n"
         message += f"<b>status</b> : {status}\n"
+        message += f"<b>statusupdate</b> : {status_update}\n"
+        message += f"<b>dateopen</b> : {date_open}\n"
+        message += f"<b>aging</b> : {aging}\n"
         message += f"<b>updatetanggal</b> : {update_date}\n"
         message += f"<b>closedby</b> : {closed_by}\n"
-        
+        message += f"<b>note</b> : {note}\n"
+
         return message
-    
+
+
+    @staticmethod
+    def format_history_rows(rows: List[Dict], title: str) -> str:
+        if not rows:
+            return "Tidak ada data history"
+
+        lines = [f"<b>{title}</b>"]
+        for row in rows:
+            ticket_id = MessageFormatter._get_value(row, ["TiketID", "TicketID"], default="N/A")
+            site_id = MessageFormatter._get_value(row, ["SITEID", "SiteID"], default="N/A")
+            date_open = MessageFormatter._get_value(row, ["DateOpen", "DATE"], default="N/A")
+            update_date = MessageFormatter._get_value(row, ["Updatetanggal", "UpdateTanggal"], default="N/A")
+            status = MessageFormatter._get_value(row, ["Status"], default="N/A")
+            status_update = MessageFormatter._get_value(row, ["StatusUpdate"], default="N/A")
+            priority = MessageFormatter._get_value(row, ["Priority", "Prio"], default="N/A")
+            suspect = MessageFormatter._get_value(row, ["Suspect"], default="N/A")
+            note = MessageFormatter._get_value(row, ["Note"], default="-")
+            closed_by = MessageFormatter._get_value(row, ["closedby", "ClosedBy"], default="-")
+            lines.append(
+                "<blockquote>"
+                f"TiketID: <code>{ticket_id}</code>\n"
+                f"SITEID: {site_id}\n"
+                f"Priority: {priority}\n"
+                f"Status: {status}\n"
+                f"StatusUpdate: {status_update}\n"
+                f"DateOpen: {date_open}\n"
+                f"UpdateTanggal: {update_date}\n"
+                f"ClosedBy: {closed_by}\n"
+                f"Note: {note}\n"
+                f"Suspect: {suspect}"
+                "</blockquote>"
+            )
+        return "\n".join(lines)
+
     @staticmethod
     def format_help_message() -> str:
         """Format pesan bantuan"""
-        message = "<b>🤖 Bot NOVLI V1.0 - Panduan Penggunaan</b>\n\n"
+        message = "<b>Bot NOVLI V1.0 - Panduan Penggunaan</b>\n\n"
         message += "<b>Command yang tersedia:</b>\n\n"
-        message += "🔹 /start - Mulai bot + tampilkan summary\n"
-        message += "🔹 /summary - Tampilkan summary tiket H-1\n"
-        message += "🔹 /help - Tampilkan panduan ini\n"
-        message += "🔹 /info - Statistik data (P1/P2, Open, Cache)\n"
-        message += "🔹 /alarm - Tampilkan alarm update tiket\n"
-        message += "🔹 /list - Tampilkan semua tiket (H-1)\n"
-        message += "🔹 /p1 - Tampilkan tiket prioritas P1 (H-1)\n"
-        message += "🔹 /p2 - Tampilkan tiket prioritas P2 (H-1)\n"
-        message += "🔹 /ticket [ID] - Tampilkan detail tiket\n"
-        message += "🔹 /refresh - Refresh data dari Google Sheets\n"
-        message += "🔹 /columns - Lihat nama kolom di sheet\n\n"
-        message += "<b>ℹ️ Info Penting:</b>\n"
-        message += "• Data difilter untuk H-1 (kemarin)\n"
-        message += "• Hanya tiket P1 dan P2 yang ditampilkan\n"
-        message += "• Data di-cache selama 5 menit\n"
-        message += "• Gunakan /sync untuk update data\n\n"
+        message += "/start - Mulai bot + tampilkan menu\n"
+        message += "/summary - Tampilkan ringkasan tiket\n"
+        message += "/help - Tampilkan panduan ini\n"
+        message += "/info - Statistik data\n"
+        message += "/alarm - Tampilkan alarm update tiket\n"
+        message += "/list - Tampilkan daftar tiket\n"
+        message += "/p1 - Tampilkan tiket prioritas P1\n"
+        message += "/p2 - Tampilkan tiket prioritas P2\n"
+        message += "/ticket [ID] - Tampilkan detail tiket\n"
+        message += "/sync - Sinkronisasi data ke database\n"
+        message += "/import - Import data dari file (staging replika)\n"
+        message += "/close [ID] [NOTE] - Tutup tiket\n"
+        message += "/columns - Lihat nama kolom di sheet\n\n"
+        message += "<b>Info Penting:</b>\n"
+        message += "- Data diambil dari NOVLI Global\n"
+        message += "- Hanya tiket dengan status Open yang ditampilkan\n"
+        message += "- Gunakan /sync untuk update data\n\n"
         message += "<i>Data diambil dari Google Sheets secara otomatis</i>"
-        
+
         return message
